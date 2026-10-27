@@ -6,6 +6,7 @@ import uuid
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import streamlit as st
 from hand_ui import sliding_hand
+from hand_layout import automatic_order
 from engine import Game, analyze, discard_choice, label, suit, rank, RANKS, SUITS
 
 st.set_page_config(page_title='Velvet Gin | Your private card room', page_icon='♠', layout='wide')
@@ -14,6 +15,7 @@ st.set_page_config(page_title='Velvet Gin | Your private card room', page_icon='
 # deck, hands, scores, and random generator between those executions.
 if 'game' not in st.session_state: st.session_state.game = Game()
 game = st.session_state.game
+if not hasattr(game, 'ui_id'): game.ui_id = uuid.uuid4().hex
 
 THEMES = {
     'Emerald club': ('#081e1b','#123c32','#d4b977','#f4f0df'),
@@ -28,8 +30,8 @@ with st.sidebar:
     st.caption({'Easy':'Relaxed play, with occasional mistakes.', 'Medium':'Builds melds and minimizes deadwood.',
                 'Hard':'Protects potential melds and tracks your visible pickups.'}[difficulty])
     theme = st.selectbox('Table atmosphere', list(THEMES))
-    sort_by = st.radio('Starting card order', ['Suit','Rank'], horizontal=True)
-    st.caption('Drag cards to arrange them manually. Change this option to sort again.')
+    sort_by = st.radio('Sort cards by', ['Suit','Rank'], horizontal=True)
+    st.caption('After each draw, melds move left and deadwood sorts by this setting. Drag to override until your hand changes.')
     hints = st.checkbox('Show melds & hints', value=True)
     target = st.selectbox('Next match target', [50,100,150,200], index=1)
     # A confirmation checkbox prevents an accidental reset during a hand.
@@ -121,7 +123,22 @@ else:
     left, right = st.columns([1,2])
     with left:
         st.markdown('#### The discard pile')
-        if game.pile: st.markdown(cards_html([game.pile[-1]]),unsafe_allow_html=True)
+        can_take = game.turn == 0 and game.phase in ('draw', 'offer') and bool(game.pile)
+        if game.pile:
+            top = game.pile[-1]
+            pile_context = f'{game.ui_id}:{game.round}:{len(game.log)}:{game.phase}:{top}'
+            pickup = sliding_hand(
+                cards=[dict(id=top, label=label(top), rank=RANKS[rank(top)-1],
+                            suit=SUITS[suit(top)], red=suit(top) in (1,2), meld=False)],
+                selected=None, forbidden=None, can_select=can_take, allow_drag=False,
+                context=pile_context, gold=gold, ink=ink, key='discard_pickup', default=None,
+                instructions='Tap this card to pick it up.' if can_take else 'Draw first, then discard once.' if game.phase=='discard' else 'Both players passed; draw stock.')
+            if isinstance(pickup, dict) and pickup.get('event_id') != st.session_state.get('pickup_event'):
+                st.session_state.pickup_event = pickup.get('event_id')
+                if can_take and pickup.get('context') == pile_context and pickup.get('selected') == top:
+                    game.draw('discard'); st.session_state.pop('selected',None); st.rerun()
+            if can_take:
+                st.caption(f'{label(top)} is available — tap the card or use Take discard.')
         else: st.caption('Empty until your discard')
         st.caption(f'{len(game.stock)} cards remain in the stock')
     with right:
@@ -140,28 +157,25 @@ else:
         a,b,c = st.columns(3)
         if a.button('Draw stock', disabled=game.phase not in ('draw','forced'),use_container_width=True):
             game.draw('stock'); st.session_state.pop('selected',None); st.rerun()
-        if b.button('Take discard',disabled=game.phase not in ('draw','offer'),use_container_width=True):
+        if b.button('Take discard',disabled=not can_take,use_container_width=True):
             game.draw('discard'); st.session_state.pop('selected',None); st.rerun()
         if c.button('Pass',disabled=game.phase!='offer',use_container_width=True):
             game.pass_offer(); st.rerun()
 
-# Keep your custom order across draws, CPU turns, settings, and page switches.
-# A new card is appended; a discarded card disappears without sorting the rest.
-if not hasattr(game, 'ui_id'): game.ui_id = uuid.uuid4().hex
-order_key = (game.ui_id, game.round)
-if st.session_state.get('hand_round') != order_key or st.session_state.get('hand_sort') != sort_by:
-    st.session_state.hand_order = sorted(game.hands[0], key=(lambda c:(suit(c),rank(c))) if sort_by=='Suit' else (lambda c:(rank(c),suit(c))))
-    st.session_state.hand_round = order_key
+# Reorganize only when the actual hand or the chosen sort setting changes.
+# Manual drags, hint toggles, CPU actions, and card selection do not undo a layout.
+order_key = (game.ui_id, game.round, tuple(sorted(game.hands[0])))
+if st.session_state.get('hand_contents') != order_key or st.session_state.get('hand_sort') != sort_by:
+    st.session_state.hand_order = automatic_order(game.hands[0], sort_by)
+    st.session_state.hand_contents = order_key
     st.session_state.hand_sort = sort_by
     st.session_state.hand_revision = st.session_state.get('hand_revision', 0) + 1
-hand = [c for c in st.session_state.hand_order if c in game.hands[0]]
-hand += [c for c in game.hands[0] if c not in hand]
-st.session_state.hand_order = hand
+hand = list(st.session_state.hand_order)
 dead, melds, loose = analyze(hand)
 selected = st.session_state.get('selected')
 if selected not in hand: selected = None
 st.markdown('### Your hand')
-st.caption('Gold outlines mark your best melds.' if hints else 'Build sets of equal ranks and runs of the same suit.')
+st.caption('Melds automatically group on the left; deadwood sorts on the right after each draw or discard. Drag to change this order.')
 st.caption('Slide cards with your mouse or finger to rearrange. Tap a card to select it. Arrow keys also move a focused card.')
 # Reject delayed events from an earlier hand or an earlier draw/discard.
 context = f'{game.ui_id}:{game.round}:{game.phase}:{sorted(hand)}:{st.session_state.hand_revision}'

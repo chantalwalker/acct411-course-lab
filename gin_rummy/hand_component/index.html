@@ -7,7 +7,9 @@
 .red{color:#b74758}.meld{border-color:var(--gold);box-shadow:0 0 0 2px var(--gold)}
 .selected{outline:3px solid var(--gold);transform:translateY(-8px)}
 .card:focus-visible{outline:3px solid #70d9ff;outline-offset:3px}
-.dragging{opacity:.75;z-index:5;cursor:grabbing;box-shadow:0 12px 22px #0008;transition:none}
+.placeholder{opacity:.22;outline:2px dashed var(--gold)}
+.ghost{position:fixed;z-index:100;pointer-events:none;transform:none;opacity:.95;box-shadow:0 12px 22px #0008;cursor:grabbing}
+.pickup .card{cursor:pointer}.pickup .card:disabled{cursor:default;opacity:.7}
 .corner{position:absolute;top:5px;left:7px;font:700 17px Georgia}.pip{position:absolute;inset:26px 0;text-align:center;font-size:34px}.bottom{position:absolute;bottom:4px;right:7px;transform:rotate(180deg);font:700 16px Georgia}
 .lock{position:absolute;bottom:3px;left:4px;font-size:10px}
 #status{font-size:12px;opacity:.85;padding:0 7px 10px;min-height:26px}
@@ -16,75 +18,123 @@
 <div id="hand" role="group" aria-label="Your cards. Drag to rearrange, or focus a card and use left and right arrow keys."></div>
 <div id="status" role="status" aria-live="polite">Slide cards to arrange your hand. Tap to select a discard.</div>
 <script>
-// This small, local component speaks Streamlit's v1 component protocol.
-// No CDN, npm install, or external JavaScript package is needed.
+// Streamlit v1 bridge. Only a completed drop publishes an event/reruns Python.
 const hand=document.getElementById('hand'), status=document.getElementById('status');
 let args={}, order=[], drag=null;
-function send(type, data={}){parent.postMessage({isStreamlitMessage:true,type,...data},'*');}
+function send(type,data={}){parent.postMessage({isStreamlitMessage:true,type,...data},'*');}
 function height(){send('streamlit:setFrameHeight',{height:document.body.scrollHeight+4});}
 function publish(selected=args.selected){
   send('streamlit:setComponentValue',{dataType:'json',value:{
-    event_id:crypto.randomUUID(), context:args.context, order:[...order], selected
+    event_id:crypto.randomUUID(),context:args.context,order:[...order],selected
   }});
 }
-function orderedIds(){return [...hand.children].map(el=>Number(el.dataset.id));}
+function pick(id){
+  if(args.can_select&&id!==args.forbidden){args.selected=id;paint();publish(id);}
+}
+function cancelDrag(){
+  if(!drag)return;
+  const old=drag;drag=null;old.ghost?.remove();
+  order=old.original;
+  if(hand.hasPointerCapture(old.pointer))hand.releasePointerCapture(old.pointer);
+  paint();
+}
+function moveDrag(e){
+  if(!drag||e.pointerId!==drag.pointer)return;
+  if(Math.hypot(e.clientX-drag.x,e.clientY-drag.y)<6&&!drag.moved)return;
+  e.preventDefault();
+  if(!drag.moved){
+    drag.moved=true;
+    // A floating copy follows the pointer. The original is a stable placeholder.
+    drag.ghost=drag.el.cloneNode(true);drag.ghost.classList.add('ghost');
+    drag.ghost.removeAttribute('data-id');drag.ghost.tabIndex=-1;
+    const r=drag.slots[drag.original.indexOf(drag.id)];
+    Object.assign(drag.ghost.style,{width:r.width+'px',height:r.height+'px'});
+    document.body.append(drag.ghost);drag.el.classList.add('placeholder');
+  }
+  drag.ghost.style.left=(e.clientX-drag.offsetX)+'px';
+  drag.ghost.style.top=(e.clientY-drag.offsetY)+'px';
+  // Stable pre-drag slots avoid hit-testing the moving card and allow a single
+  // pointer move to jump directly to any slot, including another wrapped row.
+  let target=0,best=Infinity;
+  drag.slots.forEach((r,i)=>{
+    const distance=(e.clientX-r.cx)**2+(e.clientY-r.cy)**2;
+    if(distance<best){best=distance;target=i;}
+  });
+  const next=drag.original.filter(id=>id!==drag.id);next.splice(target,0,drag.id);
+  if(next.join(',')!==order.join(',')){
+    order=next;
+    // Capture lives on the stationary hand container, never on a moved card.
+    for(const id of order)hand.append(hand.querySelector(`[data-id="${id}"]`));
+  }
+}
+function finishDrag(e){
+  if(!drag||e.pointerId!==drag.pointer)return;
+  moveDrag(e); // Fast drags may have no intermediate pointermove event.
+  const old=drag;drag=null;old.ghost?.remove();old.el.classList.remove('placeholder');
+  if(hand.hasPointerCapture(old.pointer))hand.releasePointerCapture(old.pointer);
+  if(old.moved){status.textContent='Card order saved. Drag again whenever you like.';publish();}
+  else pick(old.id);
+}
 function paint(){
   hand.replaceChildren();
+  hand.classList.toggle('pickup',args.allow_drag===false);
   for(const id of order){
-    const c=args.cards.find(c=>c.id===id), el=document.createElement('button');
+    const c=args.cards.find(c=>c.id===id),el=document.createElement('button');
     el.type='button';el.dataset.id=id;
     el.className='card'+(c.red?' red':'')+(c.meld?' meld':'')+(id===args.selected?' selected':'');
-    el.setAttribute('aria-label',c.label+'. Drag or use arrow keys to reorder'+(id===args.forbidden?'. Cannot discard this turn.':''));
+    const action=args.allow_drag===false?'Pick up discard':'Drag to any position or use arrow keys';
+    el.setAttribute('aria-label',c.label+'. '+action+(id===args.forbidden?'. Cannot discard this turn.':''));
     el.setAttribute('aria-pressed',id===args.selected?'true':'false');
     el.innerHTML=`<span class="corner">${c.rank}</span><span class="pip">${c.suit}</span><span class="bottom">${c.rank}</span>`;
     if(id===args.forbidden)el.innerHTML+='<span class="lock">●</span>';
-    el.addEventListener('pointerdown',e=>{
-      if(e.button!==0)return;
-      // Capture the pointer so touch and mouse drops work outside a card.
-      el.setPointerCapture(e.pointerId);
-      drag={el,id,x:e.clientX,y:e.clientY,moved:false,original:[...order]};
-    });
-    el.addEventListener('pointermove',e=>{
-      if(!drag||drag.el!==el)return;
-      if(Math.hypot(e.clientX-drag.x,e.clientY-drag.y)<6&&!drag.moved)return;
-      drag.moved=true;el.classList.add('dragging');
-      // Move within the actual DOM so adjacent cards immediately slide aside.
-      const hit=document.elementsFromPoint(e.clientX,e.clientY).find(n=>n.classList?.contains('card')&&n!==el);
-      if(hit){
-        const nodes=[...hand.children], before=nodes.indexOf(el)<nodes.indexOf(hit);
-        hand.insertBefore(el,before?hit.nextSibling:hit);
-      }
-      order=orderedIds();
-    });
-    el.addEventListener('pointerup',e=>{
-      if(!drag||drag.el!==el)return;
-      const moved=drag.moved;drag=null;el.classList.remove('dragging');
-      if(el.hasPointerCapture(e.pointerId))el.releasePointerCapture(e.pointerId);
-      if(moved){status.textContent='Card order saved.';publish();}
-      else if(args.can_select&&id!==args.forbidden){args.selected=id;paint();publish(id);}
-    });
-    el.addEventListener('pointercancel',()=>{
-      if(drag){order=drag.original;drag=null;paint();}
-    });
-    el.addEventListener('keydown',e=>{
-      const i=order.indexOf(id),delta=e.key==='ArrowLeft'?-1:e.key==='ArrowRight'?1:0;
-      if(delta){e.preventDefault();const j=i+delta;if(j<0||j>=order.length)return;
-        [order[i],order[j]]=[order[j],order[i]];paint();
-        hand.querySelector(`[data-id="${id}"]`).focus();publish();
-      }else if((e.key==='Enter'||e.key===' ')&&args.can_select&&id!==args.forbidden){
-        e.preventDefault();args.selected=id;paint();publish(id);
-      }
-    });
+    if(args.allow_drag===false){
+      el.disabled=!args.can_select;
+      el.addEventListener('click',()=>pick(id));
+    }else{
+      el.addEventListener('pointerdown',e=>{
+        if(e.button!==0||drag)return;
+        e.preventDefault();el.focus();
+        const rect=el.getBoundingClientRect();
+        const slots=[...hand.children].map(node=>{
+          const r=node.getBoundingClientRect();
+          return {width:r.width,height:r.height,cx:r.x+r.width/2,cy:r.y+r.height/2};
+        });
+        drag={el,id,pointer:e.pointerId,x:e.clientX,y:e.clientY,offsetX:e.clientX-rect.x,
+              offsetY:e.clientY-rect.y,moved:false,original:[...order],slots};
+        hand.setPointerCapture(e.pointerId);
+      });
+      el.addEventListener('keydown',e=>{
+        const i=order.indexOf(id),delta=e.key==='ArrowLeft'?-1:e.key==='ArrowRight'?1:0;
+        if(delta||e.key==='Home'||e.key==='End'){
+          e.preventDefault();const j=e.key==='Home'?0:e.key==='End'?order.length-1:i+delta;
+          if(j<0||j>=order.length)return;
+          order.splice(i,1);order.splice(j,0,id);paint();
+          hand.querySelector(`[data-id="${id}"]`).focus();publish();
+        }else if(e.key==='Enter'||e.key===' '){e.preventDefault();pick(id);}
+      });
+    }
     hand.append(el);
   }
   height();
 }
+// Container capture survives moving individual cards in the DOM.
+hand.addEventListener('pointermove',moveDrag);
+hand.addEventListener('pointerup',finishDrag);
+hand.addEventListener('pointercancel',cancelDrag);
+hand.addEventListener('lostpointercapture',()=>{if(drag)cancelDrag();});
+window.addEventListener('keydown',e=>{if(e.key==='Escape')cancelDrag();});
+window.addEventListener('resize',cancelDrag);
 window.addEventListener('message',e=>{
   if(e.source!==parent||e.data.type!=='streamlit:render')return;
-  args=e.data.args;drag=null;order=args.cards.map(c=>c.id);
+  // Ignore harmless duplicate renders during a gesture; changed game state cancels it.
+  if(drag&&e.data.args.context===args.context)return;
+  cancelDrag();args=e.data.args;order=args.cards.map(c=>c.id);
   document.documentElement.style.setProperty('--gold',args.gold);
-  document.documentElement.style.setProperty('--ink',args.ink);paint();
+  document.documentElement.style.setProperty('--ink',args.ink);
+  status.textContent=args.instructions||'Drag a card to any position. Tap to select; arrow keys, Home and End also move cards.';
+  paint();
 });
 new ResizeObserver(height).observe(hand);
 send('streamlit:componentReady',{apiVersion:1});height();
+
 </script></body></html>

@@ -30,10 +30,22 @@ python -m streamlit run arcade.py
 
 Choose Easy, Medium, or Hard in the sidebar. Pick one of four table atmospheres.
 On the opening turn, take the face-up card or pass. If both players pass, draw stock.
-After drawing, click a card button and then **Discard selected**. The CPU responds
+Click the face-up discard (including the CPU's most recent discard), or use
+**Take discard**, to draw it on your draw turn. After drawing, click a card or
+card button and then **Discard selected**. The CPU responds
 automatically. To finish a hand, use **Discard & knock** when your remaining
 deadwood is at most 10, or **Declare GIN!** at zero. The hint button selects a
 suggested discard; it does not play it for you.
+
+Drag a card directly to any position in one motion, including across wrapped
+rows on a small screen. Tap to select; arrow keys, Home, and End also rearrange.
+After each deal, draw, or discard, complete melds group on the left and deadwood
+sorts on the right using **Sort cards by: Rank / Suit**. Each meld stays together.
+You can then manually rearrange any card; normal UI reruns and CPU actions keep
+that arrangement until your hand changes or you change the sort option.
+
+Only the top discard can be picked up, and only before your discard for that
+turn. A CPU knock/gin ends the round, so its final discard cannot be picked up.
 
 Melds and layoffs are calculated automatically. The UI shows round results and a
 match scorecard. Your progress is held in Streamlit session state; reloading or
