@@ -1,1 +1,3 @@
-streamlit==1.66.0
+# Streamlit hosts the Python app and its embedded browser game.
+# No pygame, pandas, Node.js, or separate JavaScript packages are needed.
+streamlit>=1.45,<2
