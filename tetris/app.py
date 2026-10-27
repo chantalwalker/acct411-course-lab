@@ -1,4 +1,4 @@
-"""THEME DROP — a commented, self-contained Streamlit falling-block game.
+"""TETRIS — a commented, self-contained Streamlit falling-block game.
 
 Run: streamlit run app.py
 Python hosts the page; JavaScript runs the fast animation in your browser.
@@ -8,7 +8,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 # Wide layout gives our game room on both laptops and phones.
-st.set_page_config(page_title="Theme Drop · Tetris", page_icon="🧩", layout="wide")
+st.set_page_config(page_title="TETRIS", page_icon="🧩", layout="wide")
 
 # A raw Python string preserves JavaScript backslashes exactly as written.
 # HTML = page structure, CSS = appearance, JavaScript = game rules and input.
@@ -25,7 +25,7 @@ header{display:flex;justify-content:space-between;gap:20px;align-items:center}h1
 @media(max-width:650px){.shell{padding:12px}h1{font-size:28px}.layout{grid-template-columns:minmax(190px,300px) minmax(85px,1fr);gap:10px}.left{grid-column:2;grid-row:1}.board-wrap{grid-column:1;grid-row:1}.right{grid-column:1 / -1;display:flex;gap:10px;flex-wrap:wrap}.right .card{flex:1}.card{padding:10px}.keys{display:none}.number{font-size:23px}header .hint{display:none}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style></head><body><div class="shell">
-<header><div><div class="eyebrow">EIGHT WORLDS · ONE MORE ROUND</div><h1>THEME DROP <span id="motif">✦</span></h1></div><div class="hint">A Tetris-style escape<br>Made for your next little break.</div></header>
+<header><div><div class="eyebrow">EIGHT WORLDS · ONE MORE ROUND</div><h1>TETRIS <span id="motif">✦</span></h1></div><div class="hint">A Tetris-style escape<br>Made for your next little break.</div></header>
 <div class="toolbar">
 <label>World <select id="theme" aria-label="Choose theme"></select></label>
 <button id="start">Start game</button><button id="pause">Pause</button>
