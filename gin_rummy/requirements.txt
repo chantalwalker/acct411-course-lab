@@ -1,0 +1,2 @@
+# The game uses Python's standard library plus Streamlit only.
+streamlit>=1.45,<2
