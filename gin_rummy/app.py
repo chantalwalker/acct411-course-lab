@@ -1,9 +1,11 @@
 """Velvet Gin — run with: streamlit run gin_rummy/app.py"""
 from pathlib import Path
 import sys
+import uuid
 # Ensure imports work both in Streamlit Cloud and from the repository root.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import streamlit as st
+from hand_ui import sliding_hand
 from engine import Game, analyze, discard_choice, label, suit, rank, RANKS, SUITS
 
 st.set_page_config(page_title='Velvet Gin | Your private card room', page_icon='♠', layout='wide')
@@ -26,7 +28,8 @@ with st.sidebar:
     st.caption({'Easy':'Relaxed play, with occasional mistakes.', 'Medium':'Builds melds and minimizes deadwood.',
                 'Hard':'Protects potential melds and tracks your visible pickups.'}[difficulty])
     theme = st.selectbox('Table atmosphere', list(THEMES))
-    sort_by = st.radio('Arrange your cards', ['Suit','Rank'], horizontal=True)
+    sort_by = st.radio('Starting card order', ['Suit','Rank'], horizontal=True)
+    st.caption('Drag cards to arrange them manually. Change this option to sort again.')
     hints = st.checkbox('Show melds & hints', value=True)
     target = st.selectbox('Next match target', [50,100,150,200], index=1)
     # A confirmation checkbox prevents an accidental reset during a hand.
@@ -142,13 +145,44 @@ else:
         if c.button('Pass',disabled=game.phase!='offer',use_container_width=True):
             game.pass_offer(); st.rerun()
 
-hand = sorted(game.hands[0],key=(lambda c:(suit(c),rank(c))) if sort_by=='Suit' else (lambda c:(rank(c),suit(c))))
+# Keep your custom order across draws, CPU turns, settings, and page switches.
+# A new card is appended; a discarded card disappears without sorting the rest.
+if not hasattr(game, 'ui_id'): game.ui_id = uuid.uuid4().hex
+order_key = (game.ui_id, game.round)
+if st.session_state.get('hand_round') != order_key or st.session_state.get('hand_sort') != sort_by:
+    st.session_state.hand_order = sorted(game.hands[0], key=(lambda c:(suit(c),rank(c))) if sort_by=='Suit' else (lambda c:(rank(c),suit(c))))
+    st.session_state.hand_round = order_key
+    st.session_state.hand_sort = sort_by
+    st.session_state.hand_revision = st.session_state.get('hand_revision', 0) + 1
+hand = [c for c in st.session_state.hand_order if c in game.hands[0]]
+hand += [c for c in game.hands[0] if c not in hand]
+st.session_state.hand_order = hand
 dead, melds, loose = analyze(hand)
 selected = st.session_state.get('selected')
 if selected not in hand: selected = None
 st.markdown('### Your hand')
 st.caption('Gold outlines mark your best melds.' if hints else 'Build sets of equal ranks and runs of the same suit.')
-st.markdown(cards_html(hand, {c for group in melds for c in group} if hints else (),selected),unsafe_allow_html=True)
+st.caption('Slide cards with your mouse or finger to rearrange. Tap a card to select it. Arrow keys also move a focused card.')
+# Reject delayed events from an earlier hand or an earlier draw/discard.
+context = f'{game.ui_id}:{game.round}:{game.phase}:{sorted(hand)}:{st.session_state.hand_revision}'
+melded = {c for group in melds for c in group} if hints else set()
+event = sliding_hand(
+    cards=[dict(id=c, label=label(c), rank=RANKS[rank(c)-1], suit=SUITS[suit(c)],
+                red=suit(c) in (1,2), meld=c in melded) for c in hand],
+    selected=selected, forbidden=game.forbidden, can_select=game.phase=='discard',
+    context=context, gold=gold, ink=ink, key='sliding_hand', default=None)
+if isinstance(event, dict) and event.get('event_id') != st.session_state.get('hand_event'):
+    st.session_state.hand_event = event.get('event_id')
+    proposed = event.get('order')
+    if (event.get('context') == context and isinstance(proposed, list)
+            and all(type(c) is int for c in proposed)
+            and len(proposed) == len(hand) and set(proposed) == set(hand)):
+        st.session_state.hand_order = proposed
+        choice = event.get('selected')
+        if game.phase == 'discard' and choice in hand and choice != game.forbidden:
+            st.session_state.selected = choice
+        st.session_state.hand_revision += 1
+        st.rerun()
 
 if game.phase=='discard':
     # Two short rows keep card buttons usable on smaller screens.

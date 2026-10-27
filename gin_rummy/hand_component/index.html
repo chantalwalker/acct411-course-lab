@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{box-sizing:border-box}body{margin:0;background:transparent;font-family:system-ui;color:var(--ink,#fff)}
+#hand{display:flex;flex-wrap:wrap;gap:9px;padding:18px 7px 12px;min-height:140px}
+.card{position:relative;flex:0 0 69px;height:99px;border-radius:9px;background:#fffcf4;color:#243031;border:2px solid #eee;box-shadow:0 5px 12px #0004;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;transition:box-shadow .15s;}
+.red{color:#b74758}.meld{border-color:var(--gold);box-shadow:0 0 0 2px var(--gold)}
+.selected{outline:3px solid var(--gold);transform:translateY(-8px)}
+.card:focus-visible{outline:3px solid #70d9ff;outline-offset:3px}
+.dragging{opacity:.75;z-index:5;cursor:grabbing;box-shadow:0 12px 22px #0008;transition:none}
+.corner{position:absolute;top:5px;left:7px;font:700 17px Georgia}.pip{position:absolute;inset:26px 0;text-align:center;font-size:34px}.bottom{position:absolute;bottom:4px;right:7px;transform:rotate(180deg);font:700 16px Georgia}
+.lock{position:absolute;bottom:3px;left:4px;font-size:10px}
+#status{font-size:12px;opacity:.85;padding:0 7px 10px;min-height:26px}
+@media(max-width:640px){#hand{gap:7px}.card{flex-basis:47px;height:74px}.pip{font-size:24px;inset:22px 0}.corner,.bottom{font-size:13px}}
+</style></head><body>
+<div id="hand" role="group" aria-label="Your cards. Drag to rearrange, or focus a card and use left and right arrow keys."></div>
+<div id="status" role="status" aria-live="polite">Slide cards to arrange your hand. Tap to select a discard.</div>
+<script>
+// This small, local component speaks Streamlit's v1 component protocol.
+// No CDN, npm install, or external JavaScript package is needed.
+const hand=document.getElementById('hand'), status=document.getElementById('status');
+let args={}, order=[], drag=null;
+function send(type, data={}){parent.postMessage({isStreamlitMessage:true,type,...data},'*');}
+function height(){send('streamlit:setFrameHeight',{height:document.body.scrollHeight+4});}
+function publish(selected=args.selected){
+  send('streamlit:setComponentValue',{dataType:'json',value:{
+    event_id:crypto.randomUUID(), context:args.context, order:[...order], selected
+  }});
+}
+function orderedIds(){return [...hand.children].map(el=>Number(el.dataset.id));}
+function paint(){
+  hand.replaceChildren();
+  for(const id of order){
+    const c=args.cards.find(c=>c.id===id), el=document.createElement('button');
+    el.type='button';el.dataset.id=id;
+    el.className='card'+(c.red?' red':'')+(c.meld?' meld':'')+(id===args.selected?' selected':'');
+    el.setAttribute('aria-label',c.label+'. Drag or use arrow keys to reorder'+(id===args.forbidden?'. Cannot discard this turn.':''));
+    el.setAttribute('aria-pressed',id===args.selected?'true':'false');
+    el.innerHTML=`<span class="corner">${c.rank}</span><span class="pip">${c.suit}</span><span class="bottom">${c.rank}</span>`;
+    if(id===args.forbidden)el.innerHTML+='<span class="lock">●</span>';
+    el.addEventListener('pointerdown',e=>{
+      if(e.button!==0)return;
+      // Capture the pointer so touch and mouse drops work outside a card.
+      el.setPointerCapture(e.pointerId);
+      drag={el,id,x:e.clientX,y:e.clientY,moved:false,original:[...order]};
+    });
+    el.addEventListener('pointermove',e=>{
+      if(!drag||drag.el!==el)return;
+      if(Math.hypot(e.clientX-drag.x,e.clientY-drag.y)<6&&!drag.moved)return;
+      drag.moved=true;el.classList.add('dragging');
+      // Move within the actual DOM so adjacent cards immediately slide aside.
+      const hit=document.elementsFromPoint(e.clientX,e.clientY).find(n=>n.classList?.contains('card')&&n!==el);
+      if(hit){
+        const nodes=[...hand.children], before=nodes.indexOf(el)<nodes.indexOf(hit);
+        hand.insertBefore(el,before?hit.nextSibling:hit);
+      }
+      order=orderedIds();
+    });
+    el.addEventListener('pointerup',e=>{
+      if(!drag||drag.el!==el)return;
+      const moved=drag.moved;drag=null;el.classList.remove('dragging');
+      if(el.hasPointerCapture(e.pointerId))el.releasePointerCapture(e.pointerId);
+      if(moved){status.textContent='Card order saved.';publish();}
+      else if(args.can_select&&id!==args.forbidden){args.selected=id;paint();publish(id);}
+    });
+    el.addEventListener('pointercancel',()=>{
+      if(drag){order=drag.original;drag=null;paint();}
+    });
+    el.addEventListener('keydown',e=>{
+      const i=order.indexOf(id),delta=e.key==='ArrowLeft'?-1:e.key==='ArrowRight'?1:0;
+      if(delta){e.preventDefault();const j=i+delta;if(j<0||j>=order.length)return;
+        [order[i],order[j]]=[order[j],order[i]];paint();
+        hand.querySelector(`[data-id="${id}"]`).focus();publish();
+      }else if((e.key==='Enter'||e.key===' ')&&args.can_select&&id!==args.forbidden){
+        e.preventDefault();args.selected=id;paint();publish(id);
+      }
+    });
+    hand.append(el);
+  }
+  height();
+}
+window.addEventListener('message',e=>{
+  if(e.source!==parent||e.data.type!=='streamlit:render')return;
+  args=e.data.args;drag=null;order=args.cards.map(c=>c.id);
+  document.documentElement.style.setProperty('--gold',args.gold);
+  document.documentElement.style.setProperty('--ink',args.ink);paint();
+});
+new ResizeObserver(height).observe(hand);
+send('streamlit:componentReady',{apiVersion:1});height();
+</script></body></html>
