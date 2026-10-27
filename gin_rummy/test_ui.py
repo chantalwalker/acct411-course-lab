@@ -20,7 +20,7 @@ class InterfaceTests(unittest.TestCase):
         after=before[1:]+before[:1]
         hand_args=next(json.loads(c.proto.json_args) for c in at.get('component_instance')
                        if len(json.loads(c.proto.json_args)['cards'])==10)
-        at.session_state['sliding_hand']={'event_id':'drag-across','context':hand_args['context'],
+        at.session_state[f'sliding_hand_{g.ui_id}_{g.round}']={'event_id':'drag-across','context':hand_args['context'],
                                          'order':after,'selected':None}
         at.run()
         self.assertEqual(at.session_state['hand_order'],after)
@@ -30,7 +30,7 @@ class InterfaceTests(unittest.TestCase):
         pile_args=next(json.loads(c.proto.json_args) for c in at.get('component_instance')
                        if len(json.loads(c.proto.json_args)['cards'])==1)
         self.assertTrue(pile_args['can_select'])
-        at.session_state['discard_pickup']={'event_id':'take-cpu-discard','context':pile_args['context'],
+        at.session_state[f'discard_pickup_{g.ui_id}_{g.round}']={'event_id':'take-cpu-discard','context':pile_args['context'],
                                           'order':[top],'selected':top}
         at.run()
         self.assertFalse(at.exception)
@@ -42,5 +42,35 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(at.session_state['hand_order'],automatic_order(g.hands[0],'Rank'))
         at.run() # Old component events must not draw twice.
         self.assertEqual(len(g.hands[0]),11)
+
+    def test_card_image_controls_reset_each_round(self):
+        at=AppTest.from_file(str(Path(__file__).with_name('app.py')),default_timeout=30)
+        g=Game(seed=0,target=999)
+        at.session_state['game']=g
+        previous_ids=set()
+        for round_number in range(1,5):
+            # Set up a legal draw phase so this regression focuses on controls.
+            g.turn=0;g.phase='draw';g.draw('stock')
+            at.run()
+            self.assertFalse(at.exception)
+            self.assertNotIn('selected',at.session_state)
+            component=next(c for c in at.get('component_instance')
+                           if len(json.loads(c.proto.json_args)['cards'])==11)
+            self.assertNotIn(component.proto.id,previous_ids)
+            previous_ids.add(component.proto.id)
+            args=json.loads(component.proto.json_args)
+            card=g.hands[0][0]
+            at.session_state[f'sliding_hand_{g.ui_id}_{g.round}']={
+                'event_id':f'image-select-{round_number}', 'context':args['context'],
+                'order':at.session_state['hand_order'], 'selected':card}
+            at.run()
+            discard=next(b for b in at.button if b.label=='Discard selected')
+            self.assertFalse(discard.disabled)
+            self.assertEqual(at.session_state['selected'],card)
+            # Exercise the same end-of-round UI and deal button as the browser.
+            g.phase='over';g.result={'reason':'Test draw','points':0,'winner':None}
+            at.run()
+            next(b for b in at.button if b.label=='Deal next round').click().run()
+            self.assertEqual(g.round,round_number+1)
 
 if __name__=='__main__':unittest.main()

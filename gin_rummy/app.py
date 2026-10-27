@@ -16,6 +16,13 @@ st.set_page_config(page_title='Velvet Gin | Your private card room', page_icon='
 if 'game' not in st.session_state: st.session_state.game = Game()
 game = st.session_state.game
 if not hasattr(game, 'ui_id'): game.ui_id = uuid.uuid4().hex
+# A new deal needs fresh browser component instances and selection state.
+# Otherwise a remounted iframe can retain the previous round's event binding.
+round_ui_key = f'{game.ui_id}_{game.round}'
+if st.session_state.get('active_card_round') != round_ui_key:
+    st.session_state.active_card_round = round_ui_key
+    for name in ('selected', 'hand_event', 'pickup_event'):
+        st.session_state.pop(name, None)
 
 THEMES = {
     'Emerald club': ('#081e1b','#123c32','#d4b977','#f4f0df'),
@@ -131,7 +138,7 @@ else:
                 cards=[dict(id=top, label=label(top), rank=RANKS[rank(top)-1],
                             suit=SUITS[suit(top)], red=suit(top) in (1,2), meld=False)],
                 selected=None, forbidden=None, can_select=can_take, allow_drag=False,
-                context=pile_context, gold=gold, ink=ink, key='discard_pickup', default=None,
+                context=pile_context, gold=gold, ink=ink, key=f'discard_pickup_{round_ui_key}', default=None,
                 instructions='Tap this card to pick it up.' if can_take else 'Draw first, then discard once.' if game.phase=='discard' else 'Both players passed; draw stock.')
             if isinstance(pickup, dict) and pickup.get('event_id') != st.session_state.get('pickup_event'):
                 st.session_state.pickup_event = pickup.get('event_id')
@@ -184,7 +191,7 @@ event = sliding_hand(
     cards=[dict(id=c, label=label(c), rank=RANKS[rank(c)-1], suit=SUITS[suit(c)],
                 red=suit(c) in (1,2), meld=c in melded) for c in hand],
     selected=selected, forbidden=game.forbidden, can_select=game.phase=='discard',
-    context=context, gold=gold, ink=ink, key='sliding_hand', default=None)
+    context=context, gold=gold, ink=ink, key=f'sliding_hand_{round_ui_key}', default=None)
 if isinstance(event, dict) and event.get('event_id') != st.session_state.get('hand_event'):
     st.session_state.hand_event = event.get('event_id')
     proposed = event.get('order')
